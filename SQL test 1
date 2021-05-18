@@ -1,0 +1,80 @@
+with date_series as 
+(
+    select
+        row_number() over (order by seq4()) AS n,
+        dateadd(day, row_number() OVER (order by seq4())-1, '2020-06-23 00:00:00') AS series_date
+    from table(generator(rowCount => 15))
+),
+suspended as 
+(
+
+    select 
+        date(created_at) as suspension_created_at_date, 
+        count(subscription_id) as suspension_count
+    from butternutbox.public.suspensions 
+    where date(created_at) = '2020-06-23'
+    group by 1
+  
+),
+resumed as 
+(
+  
+    select 
+        date(created_at) as suspension_created_at_date,
+        series_date,
+        count(subscription_id) as resumed_count
+    from butternutbox.public.suspensions 
+    cross join (select
+                    row_number() over (order by seq4()) AS n,
+                    dateadd(day, row_number() OVER (order by seq4())-1, '2020-06-23 00:00:00') AS series_date
+                from table(generator(rowCount => 15))
+                ) as date_series
+    where date(created_at) = '2020-06-23'
+    and (date(resumed_at) < date(series_date))
+    group by 1,2
+  
+),
+merge_all as 
+(
+  select
+    suspension_created_at_date,
+    series_date,
+    (suspension_count - resumed_count) as count
+  from
+  (
+  select
+        suspension_created_at_date,
+        series_date,
+        
+        case when suspension_created_at_date = series_date
+                then lead(suspension_count) over(partition by suspension_created_at_date order by series_date) 
+             else
+                suspension_count
+        end as suspension_count,
+        ifnull(resumed_count,0) as resumed_count
+    from
+    (
+    select 
+        ifnull(r.suspension_created_at_date,date_series.series_date) as suspension_created_at_date,
+        date_series.series_date,
+        suspension_count,
+        resumed_count
+    from date_series
+    left join 
+    (
+        select
+            to_timestamp(s.suspension_created_at_date) as suspension_created_at_date,
+            r.series_date,
+            s.suspension_count, 
+            r.resumed_count
+        from suspended s
+        left join resumed r
+        on s.suspension_created_at_date = r.suspension_created_at_date
+    ) r
+    on date_series.series_date = r.series_date
+    )
+    )
+)
+
+select * from merge_all order by 2;
+
