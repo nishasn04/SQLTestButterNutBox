@@ -1,0 +1,49 @@
+with deliveries as 
+(
+    select 
+        subscription_id, 
+        delivery_date,
+        rank() over (partition by subscription_id order by delivery_date) as delivery_number
+    from "BUTTERNUTBOX"."PUBLIC"."BOXES"
+),
+suspended as 
+(
+    select 
+        subscription_id,
+        created_at as suspension_created_at_date,
+        resumed_at as suspension_resumed_at_date
+    from "BUTTERNUTBOX"."PUBLIC"."SUSPENSIONS"
+),
+merge_all as (
+    select 
+        subscription_id,
+        suspension_created_at_date,
+        suspension_resumed_at_date,
+        delivery_date,
+        delivery_number
+    from 
+    (
+        select 
+            *,
+            rank() over (partition by subscription_id,suspension_created_at_date order by delivery_date ) as rank
+        from 
+        (
+            select 
+                s.subscription_id,
+                s.suspension_created_at_date,
+                s.suspension_resumed_at_date,
+                d.delivery_date,
+                d.delivery_number
+            from deliveries d
+            left join suspended s
+            on s.subscription_id = d.subscription_id
+            where date(s.suspension_created_at_date) < d.delivery_date
+        )
+    )
+  where rank = 1
+)
+select 
+    * 
+from merge_all 
+where delivery_number = 2
+order by 1
